@@ -1,0 +1,37 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+df1 = pd.read_csv("/TrafficData.csv")
+df2 = pd.read_csv("/NYC_Weather_2016_2022.csv")
+
+
+df1.drop_duplicates()
+df1.drop(columns= ['MM'], inplace=True)
+df1["WktGeom"] = df1["WktGeom"].str.strip("POINT ()")
+df1.drop(columns= ['SegmentID'], inplace=True)
+df1[["Latitude", "Longitude"]] = df1['WktGeom'].str.split(' ', n=2, expand=True)
+df1 = df1.drop(['WktGeom'], axis=1)
+
+df1.fillna('')
+
+# dropping rows with more than 2 NaaN values
+df2 = df2.dropna(thresh=2)
+df2 = df2.drop_duplicates()
+
+#Converting to datetime data type instead of string
+df2['time'] = pd.to_datetime(df2['time'])
+
+#Making the conversions
+df2['Yr'] = df2['time'].dt.year
+df2['M'] = df2['time'].dt.month
+df2['D'] = df2['time'].dt.day
+df2['HH'] = df2['time'].dt.hour
+
+#Dropped all the columns with more than 2 Naan Values
+df2 = df2.drop(['time'], axis=1)
+
+
+#final version of the version control "the dataframe"
+thedf = pd.merge(df1, df2, on=['Yr', 'M', 'D', 'HH'])
+thedf
