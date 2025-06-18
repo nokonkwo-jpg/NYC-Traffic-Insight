@@ -13,7 +13,7 @@ df1.drop(columns= ['SegmentID'], inplace=True)
 df1[["Latitude", "Longitude"]] = df1['WktGeom'].str.split(' ', n=2, expand=True)
 df1 = df1.drop(['WktGeom'], axis=1)
 
-df1.fillna('')
+df1.fillna('', inplace=True)
 
 # dropping rows with more than 2 NaaN values
 df2 = df2.dropna(thresh=2)
