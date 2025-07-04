@@ -24,3 +24,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Miscellaneous
+/scripts/cache/
+traffic_map.html

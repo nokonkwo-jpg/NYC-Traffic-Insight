@@ -16,7 +16,7 @@ app.add_middleware(
 
 print("Backend starting...")
 
-geojson_path = r"C:\Users\nokon\Downloads\traffic_lines_test.geojson"
+geojson_path = r"C:\Users\nokon\SWE\AI4AllProj\data\processed\traffic_data_osm_lines_clean.geojson"
 
 print(f"Loading GeoJSON from: {geojson_path}")
 with open(geojson_path, "r", encoding="utf-8") as f:
@@ -56,7 +56,7 @@ def get_map():
         )
     ).add_to(m)
 
-    map_file = "../traffic_map.html"
+    map_file = "traffic_map.html"
     if os.path.exists(map_file):
         try:
             os.remove(map_file)
