@@ -1,0 +1,8 @@
+These are comments I have about the dataset. The true dataset (traffic_data.geojson) with 1.7 mil
+rows, is about 515 MB. Since it's too big, use traffic_data_sample which has about
+200 points.
+
+- traffic_data.geojson and traffic_data_sample are point types
+- traffic_data_osm_lines_clean.geojson is a linestring type
+- coordinate_map.json is used to map streets to coordinates so that the lines on the map
+fall on the streets perfectly

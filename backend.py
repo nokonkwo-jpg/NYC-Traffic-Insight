@@ -16,7 +16,7 @@ app.add_middleware(
 
 print("Backend starting...")
 
-geojson_path = r"C:\Users\nokon\SWE\AI4AllProj\data\processed\traffic_data_osm_lines_clean.geojson"
+geojson_path = r"/data/processed/output/traffic_data_osm_lines_clean.geojson"
 
 print(f"Loading GeoJSON from: {geojson_path}")
 with open(geojson_path, "r", encoding="utf-8") as f:

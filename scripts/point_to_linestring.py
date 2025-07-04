@@ -1,12 +1,20 @@
 import json
 import os
 import osmnx as ox
+from pathlib import Path
 
 # Config
-HOME_DIR = os.path.expanduser("~")
-INPUT_FILE = os.path.join(HOME_DIR, "SWE","AI4AllProj","data","processed", "traffic_data_small.geojson")
-OUTPUT_FILE = os.path.join(HOME_DIR, "SWE","AI4AllProj", "data","processed", "traffic_data_osm_lines_clean.geojson")
-COORDINATE_MAP_FILE = os.path.join(HOME_DIR, "SWE","AI4AllProj", "data","processed", "coordinate_map.json")
+# I should/will later change this so that if the path doesnt exist, create it
+# If you're looking at this, you have to create these dirs or it wont work lol
+# Fixed
+BASE_DIR = Path(__file__).resolve().parent
+
+INPUT_DIR = BASE_DIR / "data" / "processed" / "input"
+INPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+INPUT_FILE = INPUT_DIR / "traffic_data_small.geojson"
+OUTPUT_FILE = BASE_DIR / "data" / "processed" / "output" / "traffic_data_osm_lines_clean.geojson"
+COORDINATE_MAP_FILE = BASE_DIR / "data" / "processed" / "coordinate_map.json"
 
 # maksure output directory exists
 os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
