@@ -6,6 +6,7 @@ from pyproj import Transformer
 # Load CSV
 csv_path = r'C:\Users\nokon\Downloads\Automated_Traffic_Volume_Counts_20250607.csv'
 OUTPUT_PATH = r'C:\Users\nokon\Downloads\traffic_data.geojson'
+
 df = pd.read_csv(csv_path, low_memory=False)
 
 # Convert Vol column to numeric (handle mixed types)
