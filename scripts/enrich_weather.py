@@ -51,7 +51,9 @@ processed_features = 0
 # This helps avoid duplicate weather API calls for the same spot and time range
 for feature in features:
     coordinates = tuple(feature['geometry']['coordinates'])  # breaking geoson into (longitude, latitude)
+    print(f"Number of unique locations: {len(coordinates)}")
     timestamp = feature['properties']['Timestamp']  # e.g., "2016-01-04 00:00:00"
+    print(f"Number of timestamps: {len(timestamp)}")
     location_time[coordinates].append(timestamp)
     processed_features+=1
     with open(progress_log_path, "a") as log:
@@ -98,7 +100,7 @@ for coordinates, timestamps in location_time.items():
             request_count_day = 0
             day_start = now
 
-        # Throttle based on safe limits
+        # Throttle proactively
         if request_count_hour >= 4500:
             sleep_time = 3600 - elapsed_hour
             print(f"[Rate limit] Hourly threshold near. Sleeping {sleep_time:.2f}s")
@@ -114,16 +116,29 @@ for coordinates, timestamps in location_time.items():
             responses = openmeteo.weather_api(url, params=params)
             request_count_hour += 1
             request_count_day += 1
-            time.sleep(0.8)  # Space out calls to avoid bursts
+            time.sleep(0.8)
             break
         except OpenMeteoRequestsError as e:
-            if "Minutely API request limit exceeded" in str(e):
-                print("Minutely rate limit hit. Sleeping for 10 seconds...")
-                with open(progress_log_path, "a") as log:
-                    log.write("Minutely rate limit hit. Sleeping for 10 seconds...\n")
-                time.sleep(10)
-            else:
-                raise e
+            error_str = str(e)
+            with open(progress_log_path, "a") as log:
+                if "Minutely" in error_str:
+                    log.write("Minutely rate limit hit. Sleeping 10 seconds...\n")
+                    print("Minutely rate limit hit. Sleeping 10 seconds...")
+                    time.sleep(10)
+                elif "Hourly" in error_str:
+                    log.write("Hourly rate limit hit. Sleeping 1 hour...\n")
+                    print("Hourly rate limit hit. Sleeping 1 hour...")
+                    time.sleep(3600)
+                elif "Daily" in error_str:
+                    log.write("Daily rate limit hit. Sleeping 24 hours...\n")
+                    print("Daily rate limit hit. Sleeping 24 hours...")
+                    time.sleep(86400)
+                elif "Monthly" in error_str:
+                    log.write("Monthly rate limit hit. Exiting script...\n")
+                    print("Monthly rate limit hit. Exiting script.")
+                    raise SystemExit(1)
+                else:
+                    raise e
 
     # Process first location. Add a for-loop for multiple locations or weather models
     response = responses[0]
