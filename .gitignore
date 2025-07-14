@@ -28,9 +28,6 @@ Thumbs.db
 # Logs
 *.log
 
-#Cache
-.cache.sqlite
-
 # Miscellaneous
 /scripts/cache/
 traffic_map.html

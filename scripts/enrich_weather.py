@@ -2,24 +2,35 @@ from decimal import Decimal, ROUND_05UP
 import openmeteo_requests  # Open-Meteo's Python client for weather API
 import pandas as pd
 import requests_cache  # Used to cache API requests and avoid duplicate calls
-from fontTools.misc.plistlib import end_date
 from retry_requests import retry  # Automatically retries failed HTTP requests
 import os
 import json
 from collections import defaultdict
 from datetime import datetime
+import time
+from openmeteo_requests.Client import OpenMeteoRequestsError
+
 
 # === Setup input/output paths ===
 # Get the base directory of the project (go up one level from /scripts)
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-input_file = os.path.join(BASE_DIR, "data", "processed", "input", "traffic_data_sample.geojson")
+input_file = os.path.join(BASE_DIR, "data", "processed", "traffic_data.geojson")
 output_dir = os.path.join(BASE_DIR, "data", "processed", "output")
 os.makedirs(output_dir, exist_ok=True)  # Create output directory if it doesn't exist
+cache_path = os.path.join(BASE_DIR, "data", "cache", "weather_cache")
+os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+progress_log_path = os.path.join(output_dir, "weather_processing_progress.txt")
 
 # Setup the Open-Meteo API client with cache and retry on error
-cache_session = requests_cache.CachedSession('.cache', expire_after=-1)
+cache_session = requests_cache.CachedSession(cache_path, expire_after=-1)
 retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
 openmeteo = openmeteo_requests.Client(session=retry_session)
+
+request_count_hour = 0
+request_count_day = 0
+hour_start = time.time()
+day_start = time.time()
+
 
 # Loading old data
 # === Load traffic observation data from GeoJSON ===
@@ -33,6 +44,8 @@ end_date = max(datetime.fromisoformat(ts).date() for ts in timestamps)
 print(f"Latest timestamp: {end_date}")
 print(f"Earliest timestamp: {start_date}")
 location_time = defaultdict(list)  # Dictionary holding coordinates:timestamps
+processed_count = 0
+processed_features = 0
 
 # === Group timestamps by unique location ===
 # This helps avoid duplicate weather API calls for the same spot and time range
@@ -40,8 +53,9 @@ for feature in features:
     coordinates = tuple(feature['geometry']['coordinates'])  # breaking geoson into (longitude, latitude)
     timestamp = feature['properties']['Timestamp']  # e.g., "2016-01-04 00:00:00"
     location_time[coordinates].append(timestamp)
-# Loading old data
-
+    processed_features+=1
+    with open(progress_log_path, "a") as log:
+        log.write(f"Processed features: {processed_features}/{len(features)}\n") # log to keep track of what's been processed
 
 url = "https://archive-api.open-meteo.com/v1/archive"
 
@@ -70,7 +84,46 @@ for coordinates, timestamps in location_time.items():
         "timezone": "America/New_York"
     }
 
-    responses = openmeteo.weather_api(url, params=params)
+    while True:
+        # Check elapsed time since hour/day start
+        now = time.time()
+        elapsed_hour = now - hour_start
+        elapsed_day = now - day_start
+
+        # Reset counters if needed
+        if elapsed_hour >= 3600:
+            request_count_hour = 0
+            hour_start = now
+        if elapsed_day >= 86400:
+            request_count_day = 0
+            day_start = now
+
+        # Throttle based on safe limits
+        if request_count_hour >= 4500:
+            sleep_time = 3600 - elapsed_hour
+            print(f"[Rate limit] Hourly threshold near. Sleeping {sleep_time:.2f}s")
+            time.sleep(sleep_time)
+            continue
+        if request_count_day >= 9500:
+            sleep_time = 86400 - elapsed_day
+            print(f"[Rate limit] Daily threshold near. Sleeping {sleep_time / 3600:.2f} hours")
+            time.sleep(sleep_time)
+            continue
+
+        try:
+            responses = openmeteo.weather_api(url, params=params)
+            request_count_hour += 1
+            request_count_day += 1
+            time.sleep(0.8)  # Space out calls to avoid bursts
+            break
+        except OpenMeteoRequestsError as e:
+            if "Minutely API request limit exceeded" in str(e):
+                print("Minutely rate limit hit. Sleeping for 10 seconds...")
+                with open(progress_log_path, "a") as log:
+                    log.write("Minutely rate limit hit. Sleeping for 10 seconds...\n")
+                time.sleep(10)
+            else:
+                raise e
 
     # Process first location. Add a for-loop for multiple locations or weather models
     response = responses[0]
@@ -125,6 +178,14 @@ for coordinates, timestamps in location_time.items():
     hourly_dataframe = pd.DataFrame(data=hourly_data)
     print(hourly_dataframe)
     all_weather_data.append(hourly_dataframe)
+
+    # Save cumulative progress after each successful response
+    partial_csv_path = os.path.join(output_dir, "weather_data_partial.csv")
+    pd.concat(all_weather_data, ignore_index=True).to_csv(partial_csv_path, index=False)
+
+    processed_count+=1
+    with open(progress_log_path, "a") as log:
+        log.write(f"Processed coords/times: {processed_count}/{len(location_time.items())}\n")
 
 # Combine all location DataFrames into one
 weather_df = pd.concat(all_weather_data, ignore_index=True)
