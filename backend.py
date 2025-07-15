@@ -19,6 +19,8 @@ print("Backend starting...")
 geojson_path = os.path.join(os.getcwd(), "data", "processed", "traffic_data_osm_lines_clean.geojson")
 
 print(f"Loading GeoJSON from: {geojson_path}")
+
+
 with open(geojson_path, "r", encoding="utf-8") as f:
     geojson_data = json.load(f)
 print(f"Loaded {len(geojson_data.get('features', []))} features from GeoJSON")
@@ -68,6 +70,7 @@ def get_map():
     m.save(map_file)
     print("Map generated and saved as traffic_map.html")
     return FileResponse(map_file)
+
 
 @app.get("/geojson")
 def get_geojson():
