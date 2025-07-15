@@ -4,9 +4,6 @@ import pandas as pd
 import requests_cache  # Used to cache API requests and avoid duplicate calls
 from retry_requests import retry  # Automatically retries failed HTTP requests
 import os
-import json
-from collections import defaultdict
-from datetime import datetime
 import time
 from openmeteo_requests.Client import OpenMeteoRequestsError
 
@@ -14,7 +11,6 @@ from openmeteo_requests.Client import OpenMeteoRequestsError
 # === Setup input/output paths ===
 # Get the base directory of the project (go up one level from /scripts)
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-input_file = os.path.join(BASE_DIR, "data", "processed", "traffic_data.geojson")
 output_dir = os.path.join(BASE_DIR, "data", "processed", "output")
 os.makedirs(output_dir, exist_ok=True)  # Create output directory if it doesn't exist
 cache_path = os.path.join(BASE_DIR, "data", "cache", "weather_cache")
@@ -30,56 +26,40 @@ request_count_hour = 0
 request_count_day = 0
 hour_start = time.time()
 day_start = time.time()
-
-
-# Loading old data
-# === Load traffic observation data from GeoJSON ===
-with open(input_file, 'r') as f:
-    traffic_data = json.load(f)
-
-features = traffic_data['features']  # Going through all the GeoJSON features (traffic points)
-timestamps = [feature['properties']['Timestamp'] for feature in traffic_data['features']] # go through each timestamp in the input file and store it in a list
-start_date = min(datetime.fromisoformat(ts).date() for ts in timestamps) # for every timestamp in the list, get the max and store it in var
-end_date = max(datetime.fromisoformat(ts).date() for ts in timestamps)
-print(f"Latest timestamp: {end_date}")
-print(f"Earliest timestamp: {start_date}")
-location_time = defaultdict(list)  # Dictionary holding coordinates:timestamps
 processed_count = 0
 processed_features = 0
-
-# === Group timestamps by unique location ===
-# This helps avoid duplicate weather API calls for the same spot and time range
-for feature in features:
-    coordinates = tuple(feature['geometry']['coordinates'])  # breaking geoson into (longitude, latitude)
-    print(f"Number of unique locations: {len(coordinates)}")
-    timestamp = feature['properties']['Timestamp']  # e.g., "2016-01-04 00:00:00"
-    print(f"Number of timestamps: {len(timestamp)}")
-    location_time[coordinates].append(timestamp)
-    processed_features+=1
-    with open(progress_log_path, "a") as log:
-        log.write(f"Processed features: {processed_features}/{len(features)}\n") # log to keep track of what's been processed
 
 url = "https://archive-api.open-meteo.com/v1/archive"
 
 all_weather_data = []
 
-for coordinates, timestamps in location_time.items():
-    lon, lat = coordinates
+# these we're picked by a script that draws a bounding box around a borough and picks the
+# furthest points from one another
+borough_points = [
+    ("Brooklyn", -73.9527531905247, 40.73579422088676),
+    ("Brooklyn", -73.88919401240395, 40.57963421654645),
+    ("Queens", -73.78224969710911, 40.78902023475063),
+    ("Queens", -73.88377292466673, 40.5672536844456),
+    ("Manhattan", -74.01176217456705, 40.70138635779195),
+    ("Manhattan", -73.90948844071255, 40.87445551939913),
+    ("Bronx", -73.80471827028069, 40.886171212869385),
+    ("Bronx", -73.93103571415577, 40.80824652852295),
+    ("Staten Island", -74.07266409737403, 40.64360714096245),
+    ("Staten Island", -74.24994651503094, 40.498253614198454),
+]
+
+for borough, lon, lat in borough_points:
     # Arounded to 2 decimal places for better precision in API calls
     long = Decimal(lon).quantize(Decimal('0.01'), rounding=ROUND_05UP)
     lati = Decimal(lat).quantize(Decimal('0.01'), rounding=ROUND_05UP)
-    #start_date = min(timestamps).split("T")[0]  # Use earliest timestamp (only date part) --> idk
-    #end_date = max(timestamps).split("T")[0]  # Use latest timestamp --> idk
 
     # === Construct API URL and parameters ===
     params = {
         "latitude": lati,
         "longitude": long,
-        # "start_date": "2010-01-01",     # Static start for now — can be changed to dynamic if needed # 2016-01-01
-        # "end_date": "2024-06-10",       # Static end date
-        "start_date": start_date,
-        "end_date": end_date,
-        "hourly": ["temperature_2m", "precipitation", "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high", "cloud_cover", "wind_speed_10m", "snow_depth", "visibility", "apparent_temperature", "relative_humidity_2m", "weather_code", "freezing_level_height", "uv_index"],
+        "start_date": "2022-12-08",     # Static start for now — can be changed to dynamic if needed # 2016-01-01
+        "end_date": "2024-06-10",       # Static end date
+        "hourly": ["temperature_2m", "precipitation", "cloud_cover_low", "snow_depth", "visibility", "weather_code", "freezing_level_height", "rain", "showers", "snowfall", "uv_index"],
         "wind_speed_unit": "mph",
         "temperature_unit": "fahrenheit",
         "precipitation_unit": "inch",
@@ -152,18 +132,15 @@ for coordinates, timestamps in location_time.items():
     hourly = response.Hourly()
     hourly_temperature_2m = hourly.Variables(0).ValuesAsNumpy()
     hourly_precipitation = hourly.Variables(1).ValuesAsNumpy()
-    hourly_cloud_cover = hourly.Variables(2).ValuesAsNumpy()
-    hourly_cloud_cover_low = hourly.Variables(3).ValuesAsNumpy()
-    hourly_cloud_cover_mid = hourly.Variables(4).ValuesAsNumpy()
-    hourly_cloud_cover_high = hourly.Variables(5).ValuesAsNumpy()
-    hourly_wind_speed_10m = hourly.Variables(6).ValuesAsNumpy()
-    hourly_snow_depth = hourly.Variables(7).ValuesAsNumpy()
-    hourly_visibility = hourly.Variables(8).ValuesAsNumpy()
-    hourly_apparent_temperature = hourly.Variables(9).ValuesAsNumpy()
-    hourly_relative_humidity_2m = hourly.Variables(10).ValuesAsNumpy()
-    hourly_weather_code = hourly.Variables(11).ValuesAsNumpy()
-    hourly_freezing_level_height = hourly.Variables(12).ValuesAsNumpy()
-    hourly_uv_index = hourly.Variables(13).ValuesAsNumpy()
+    hourly_cloud_cover_low = hourly.Variables(2).ValuesAsNumpy()
+    hourly_snow_depth = hourly.Variables(3).ValuesAsNumpy()
+    hourly_visibility = hourly.Variables(4).ValuesAsNumpy()
+    hourly_weather_code = hourly.Variables(5).ValuesAsNumpy()
+    hourly_freezing_level_height = hourly.Variables(6).ValuesAsNumpy()
+    hourly_rain = hourly.Variables(7).ValuesAsNumpy()
+    hourly_showers = hourly.Variables(8).ValuesAsNumpy()
+    hourly_snowfall = hourly.Variables(9).ValuesAsNumpy()
+    hourly_uv_index = hourly.Variables(10).ValuesAsNumpy()
 
     hourly_data = {
         "date": pd.date_range(
@@ -174,20 +151,18 @@ for coordinates, timestamps in location_time.items():
         ),
         "latitude": float(lat),
         "longitude": float(lon),
+        "borough": [borough] * hourly.Variables(0).ValuesAsNumpy().size,
         "temperature_2m": hourly_temperature_2m, # Extreme heat or cold can affect vehicle performance and road safety.
         "precipitation": hourly_precipitation,
-        "cloud_cover": hourly_cloud_cover, # Low visibility and poor lighting conditions impact driving.
         "cloud_cover_low": hourly_cloud_cover_low,
-        "cloud_cover_mid": hourly_cloud_cover_mid,
-        "cloud_cover_high": hourly_cloud_cover_high,
-        "wind_speed_10m": hourly_wind_speed_10m, # Sudden gusts can be dangerous for vehicles, especially trucks
         "snow_depth": hourly_snow_depth, #  Impacts vehicle traction and congestion
         "visibility": hourly_visibility, # Critical for driving safety, especially in fog, rain, or snow
-        "apparent_temperature": hourly_apparent_temperature, # Perceived temperature may correlate better with driver behavior than raw temp.
-        "relative_humidity_2m": hourly_relative_humidity_2m, # High humidity can mean foggy conditions or slippery roads
         "weather_code": hourly_weather_code, # Categorical description of weather (e.g., clear, fog, rain, storm, etc.)
         "freezing_level_height": hourly_freezing_level_height, # Can help model icy road conditions in winter
-        "uv_index": hourly_uv_index # sun glare can impair vision, though not as important
+        "rain": hourly_rain,
+        "showers": hourly_showers,
+        "snowfall": hourly_snowfall,
+        "uv_index": hourly_uv_index
     }
 
     hourly_dataframe = pd.DataFrame(data=hourly_data)
@@ -195,14 +170,14 @@ for coordinates, timestamps in location_time.items():
     all_weather_data.append(hourly_dataframe)
 
     # Save cumulative progress after each successful response
-    partial_csv_path = os.path.join(output_dir, "weather_data_partial.csv")
+    partial_csv_path = os.path.join(output_dir, "weather_data_partial_vm7.csv")
     pd.concat(all_weather_data, ignore_index=True).to_csv(partial_csv_path, index=False)
 
-    processed_count+=1
+    processed_count += 1
     with open(progress_log_path, "a") as log:
-        log.write(f"Processed coords/times: {processed_count}/{len(location_time.items())}\n")
+        log.write(f"Processed coords/times: {processed_count}/{len(borough_points)}\n")
 
 # Combine all location DataFrames into one
 weather_df = pd.concat(all_weather_data, ignore_index=True)
 # Save to CSV
-weather_df.to_csv(os.path.join(output_dir, "weather_data.csv"), index=False)
+weather_df.to_csv(os.path.join(output_dir, "weather_data_vm7.csv"), index=False)
