@@ -2,36 +2,35 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-df1 = pd.read_csv("/TrafficData.csv")
-df2 = pd.read_csv("/NYC_Weather_2016_2022.csv")
+traffic = pd.read_csv("RawDataFiles/TrafficData.csv")
+weather = pd.read_csv("RawDataFiles/finalWeather.csv")
 
+traffic.drop_duplicates(inplace=True)
+traffic.drop(columns= ['MM'], inplace=True)
+traffic["WktGeom"] = traffic["WktGeom"].str.strip("POINT ()")
+traffic.drop(columns= ['SegmentID'], inplace=True)
+traffic[["Latitude", "Longitude"]] = traffic['WktGeom'].str.split(' ', n=2, expand=True)
+traffic = traffic.drop(['WktGeom'], axis=1)
 
-df1.drop_duplicates()
-df1.drop(columns= ['MM'], inplace=True)
-df1["WktGeom"] = df1["WktGeom"].str.strip("POINT ()")
-df1.drop(columns= ['SegmentID'], inplace=True)
-df1[["Latitude", "Longitude"]] = df1['WktGeom'].str.split(' ', n=2, expand=True)
-df1 = df1.drop(['WktGeom'], axis=1)
+traffic.fillna('', inplace=True)
 
-df1.fillna('', inplace=True)
+#print(weather.dtypes)
+#print(traffic.dtypes)
 
-# dropping rows with more than 2 NaaN values
-df2 = df2.dropna(thresh=2)
-df2 = df2.drop_duplicates()
+#Prep data for merge
+weather = weather.rename(columns={'borough':'Boro'})
+traffic['Boro'] = traffic['Boro'].astype('category')
+weather['Boro'] = weather['Boro'].astype('category')
+print("weather columns:", weather.columns.tolist())
+print("traffic columns:", traffic.columns.tolist())
 
-#Converting to datetime data type instead of string
-df2['time'] = pd.to_datetime(df2['time'])
+print(weather.dtypes)
+print(traffic.dtypes)
 
-#Making the conversions
-df2['Yr'] = df2['time'].dt.year
-df2['M'] = df2['time'].dt.month
-df2['D'] = df2['time'].dt.day
-df2['HH'] = df2['time'].dt.hour
-
-#Dropped all the columns with more than 2 Naan Values
-df2 = df2.drop(['time'], axis=1)
-
-
-#final version of the version control "the dataframe"
-thedf = pd.merge(df1, df2, on=['Yr', 'M', 'D', 'HH'])
-thedf
+weather['date'] = pd.to_datetime(weather['date'])
+weather['Yr'] = weather['date'].dt.year
+weather['M'] = weather['date'].dt.month
+weather['D'] = weather['date'].dt.day
+weather['HH'] = weather['date'].dt.hour
+merged_traffic_data = pd.merge(traffic, weather, on=['Yr', 'M', 'D', 'HH', 'Boro'])
+merged_traffic_data.to_csv("RawDataFiles/merged_traffic_data.csv")
