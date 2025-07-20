@@ -36,7 +36,10 @@ df["rain_x_is_winter"] = df["rain"] * df["is_winter"]
 df["precip_x_is_holiday"] = df["precipitation"] * df["is_holiday"]
 df["is_holiday_x_HH"] = df["is_holiday"] * df["HH"]
 
-df.to_csv("engineered_traffic_data.csv", index=False)
+if os.path.exists('engineered_traffic_data'):
+    print('file exists')
+else:
+    df.to_csv("engineered_traffic_data.csv", index=False)
 
 
 print(df.dtypes)
