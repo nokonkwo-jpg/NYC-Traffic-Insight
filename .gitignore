@@ -33,4 +33,4 @@ Thumbs.db
 traffic_map.html
 
 # All test files will be ignored
-**/test.py
+*test*
