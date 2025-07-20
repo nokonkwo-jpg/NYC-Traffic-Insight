@@ -25,7 +25,7 @@ def main():
     print('Cleaning weather data...')
     finalWeatherframe = clean_weather(finalWeatherframe)
     print("Weather cleaned")
-    if os.path.exists('finalWeather.csv'):
+    if os.path.exists('RawDataFiles/finalWeather.csv'):
         print('file already exists')
         return
     else:
