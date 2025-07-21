@@ -12,8 +12,6 @@ __pycache__/
 /data/cache/*
 
 # Allow sample data
-!data/processed/input/traffic_data_sample.geojson
-!data/processed/output/traffic_data_osm_lines_clean.geojson
 !data/processed/comments.txt
 !data/processed/coordinate_map.json
 
