@@ -25,7 +25,7 @@ def seasons(df):
 #Holiday Classification
 def ny_holidays(df):
     us_ny_holidays = holidays.country_holidays('US', subdiv='NY')
-    df["is_holiday"] = df['date'].apply(lambda x: 1 if x in us_ny_holidays else 0)
+    df["is_holiday"] = df['date'].apply(lambda x: x in us_ny_holidays)
     return df
 
 def make_interactions(df):
