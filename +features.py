@@ -54,6 +54,7 @@ def main():
 
     #Drop useless rows
     df.drop(columns=['Latitude', 'Longitude', 'Boro', 'Yr', 'M', 'D', 'HH'], inplace=True, errors='ignore')
+    df.rename(columns={'Unnamed: 0': 'ID'}, inplace=True, errors='ignore')
 
     if os.path.exists('RawDataFiles/engineered_traffic_data.csv'):
         print('file already exists')
