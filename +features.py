@@ -51,13 +51,17 @@ def main():
     df_encoded = pd.get_dummies(df[["Boro", "Direction"]], prefix=["borough", "direction"], drop_first=True)
     df = pd.concat([df, df_encoded], axis=1)
     df = make_interactions(df)
-    if os.path.exists('engineered_traffic_data.csv'):
+
+    #Drop useless rows
+    df.drop(columns=['Latitude', 'Longitude', 'Boro', 'Yr', 'M', 'D', 'HH'], inplace=True, errors='ignore')
+
+    if os.path.exists('RawDataFiles/engineered_traffic_data.csv'):
         print('file already exists')
         return
     else:
         df.to_csv("RawDataFiles/engineered_traffic_data.csv", index=False)
         print(df.shape)
-        print('Weather Data Saved')
+        print('Data Saved')
 
 if __name__ == '__main__':
     main()
