@@ -28,7 +28,7 @@ Thumbs.db
 
 # Miscellaneous
 /scripts/cache/
-traffic_map.html
+frontend/traffic_map.html
 
 # All test files will be ignored
 *test*
