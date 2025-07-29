@@ -24,24 +24,46 @@ print("Backend starting...")
 
 print("Downloading GeoJSON from Google Drive...")
 
-file_id = "1wO3NjqVdg_GUpoEv1JpJHxZoV20Zz-Uq"
-temp_path = "traffic_data_temp.geojson"
+'''
+Filters GeoJSON based on the borough and year to avoid memory issues upon deployment.
+Args:
+    file_id(str): Google Drive file ID
+    borough(str): Borough to filter on
+    year(int): Year to filter on
+Returns:
+    dict: Filtered GeoJSON'''
+def filter_geojson_on_demand(file_id: str, borough: str, year: int):
+    print(f"Filtering on demand: borough={borough}, year={year}")
+    temp_path = "traffic_temp.geojson"
 
-# Download the file to disk
-gdown.download(id=file_id, output=temp_path, quiet=False)
+    # Download to temp file
+    gdown.download(id=file_id, output=temp_path, quiet=True)
 
-# Load into memory
-with open(temp_path, "r", encoding="utf-8") as f:
-    geojson_data = json.load(f)
+    filtered_features = []
+    with open(temp_path, "r", encoding="utf-8") as f:
+        try:
+            raw = json.load(f)
+        except Exception as e:
+            print("Error loading GeoJSON:", e)
+            return {"type": "FeatureCollection", "features": []}
 
-# Delete the file after loading
-try:
+        for feature in raw.get("features", []):
+            props = feature.get("properties", {})
+            b = props.get("Borough", "").lower()
+            ts = props.get("Timestamp", "")
+            try:
+                dt = datetime.fromisoformat(ts)
+                if b == borough.lower() and dt.year == year:
+                    filtered_features.append(feature)
+            except ValueError:
+                continue
+
     os.remove(temp_path)
-    print("Temporary file deleted.")
-except Exception as e:
-    print(f"Could not delete temp file: {e}")
+    return {
+        "type": "FeatureCollection",
+        "features": filtered_features
+    }
 
-print(f"Loaded {len(geojson_data.get('features', []))} features from GeoJSON")
 
 '''
 An endpoint that generates a visual representation of traffic data given the borough
@@ -52,40 +74,20 @@ Args:
 '''
 @app.get("/map")
 def get_map(borough: str = Query(), year: int = Query()):
-    print(f"/map endpoint hit: Generating map... (borough={borough}, year={year})")
+    print(f"/map endpoint hit: borough={borough}, year={year}")
 
-    # Filter only if parameters are provided
-    if borough and year:
-        filtered_features = []
-        for feature in geojson_data["features"]:
-            props = feature.get("properties", {})
-            b = props.get("Borough", "").lower()
-            timestamp = props.get("Timestamp", "")
+    file_id = "1wO3NjqVdg_GUpoEv1JpJHxZoV20Zz-Uq"
+    display_data = filter_geojson_on_demand(file_id, borough, year)
 
-            try:
-                dt = datetime.fromisoformat(timestamp)
-                if b == borough.lower() and dt.year == year:
-                    filtered_features.append(feature)
-            except ValueError:
-                continue
-
-        if not filtered_features:
-            return JSONResponse(
-                status_code=404,
-                content={"error": f"No features found for {borough} in {year}"}
-            )
-
-        display_data = {
-            "type": "FeatureCollection",
-            "features": filtered_features
-        }
-        print(f"Filtered down to {len(filtered_features)} features.")
-    else:
+    if not display_data["features"]:
         return JSONResponse(
-            status_code=400,
-            content={"error": "Borough and year query parameters are required."}
+            status_code=404,
+            content={"error": f"No features found for {borough} in {year}"}
         )
 
+    print(f"Filtered down to {len(display_data['features'])} features.")
+
+    # Generate map
     m = folium.Map(location=[40.739, -73.952], zoom_start=12)
 
     def style_function(feature):
@@ -119,14 +121,12 @@ def get_map(borough: str = Query(), year: int = Query()):
     if os.path.exists(map_file):
         try:
             os.remove(map_file)
-            print("Previous map file removed.")
         except PermissionError:
-            print("File in use. Close it and try again.")
-            return JSONResponse(content={"error": "File in use. Close it and retry."}, status_code=500)
+            return JSONResponse(content={"error": "Map file in use. Try again."}, status_code=500)
 
     m.save(map_file)
-    print(f"Map saved as {map_file}")
     return FileResponse(map_file)
+
 
 '''
 A form users fill out to query the /map endpoint
@@ -163,10 +163,6 @@ def filter_form():
 '''
 Returns JSON of all GeoJSON used
 '''
-@app.get("/geojson")
-def get_geojson():
-    print("/geojson endpoint hit: Returning GeoJSON data")
-    return JSONResponse(content=geojson_data)
 
 # Health check to make sure server is running
 @app.get("/ping")
