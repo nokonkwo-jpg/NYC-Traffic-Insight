@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 import folium
 import os
 from datetime import datetime
+import gdown
 
 from starlette.responses import HTMLResponse
 
@@ -21,11 +22,25 @@ app.add_middleware(
 
 print("Backend starting...")
 
-geojson_path = os.path.join(os.getcwd(), "data", "processed", "output", "traffic_data_osm_lines_clean.geojson")
+print("Downloading GeoJSON from Google Drive...")
 
-print(f"Loading GeoJSON from: {geojson_path}")
-with open(geojson_path, "r", encoding="utf-8") as f:
+file_id = "1wO3NjqVdg_GUpoEv1JpJHxZoV20Zz-Uq"
+temp_path = "traffic_data_temp.geojson"
+
+# Download the file to disk
+gdown.download(id=file_id, output=temp_path, quiet=False)
+
+# Load into memory
+with open(temp_path, "r", encoding="utf-8") as f:
     geojson_data = json.load(f)
+
+# Delete the file after loading
+try:
+    os.remove(temp_path)
+    print("Temporary file deleted.")
+except Exception as e:
+    print(f"Could not delete temp file: {e}")
+
 print(f"Loaded {len(geojson_data.get('features', []))} features from GeoJSON")
 
 '''
