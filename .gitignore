@@ -10,6 +10,7 @@ __pycache__/
 /data/raw/*
 /data/processed/*
 /data/cache/*
+data/processed/output/traffic_data_osm_lines_clean.geojson
 
 # Allow sample data
 !data/processed/comments.txt

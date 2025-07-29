@@ -100,7 +100,7 @@ def get_map(borough: str = Query(), year: int = Query()):
         )
     ).add_to(m)
 
-    map_file = "../frontend/traffic_map.html"
+    map_file = os.path.join(os.getcwd(), "frontend", "traffic_map.html")
     if os.path.exists(map_file):
         try:
             os.remove(map_file)
