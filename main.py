@@ -1,9 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Query, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
-from fastapi import Query
-from fastapi.responses import FileResponse
 import folium
 import os
 from datetime import datetime
@@ -77,7 +75,7 @@ Args:
     year(int)
 '''
 @app.get("/map")
-def get_map(borough: str = Query(), year: int = Query()):
+def get_map(borough: str = Query(), year: int = Query(), background_tasks: BackgroundTasks=None):
     print(f"/map endpoint hit: borough={borough}, year={year}")
 
     file_id = "1wO3NjqVdg_GUpoEv1JpJHxZoV20Zz-Uq"
@@ -129,7 +127,8 @@ def get_map(borough: str = Query(), year: int = Query()):
             return JSONResponse(content={"error": "Map file in use. Try again."}, status_code=500)
 
     m.save(map_file)
-    return FileResponse(map_file)
+    background_tasks.add_task(os.remove, map_file)
+    return FileResponse(map_file, background=background_tasks)
 
 
 '''
