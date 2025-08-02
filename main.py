@@ -24,6 +24,10 @@ print("Backend starting...")
 
 print("Downloading GeoJSON from Google Drive...")
 
+@app.get("/")
+def root():
+    return filter_form()
+
 '''
 Filters GeoJSON based on the borough and year to avoid memory issues upon deployment.
 Args:
@@ -117,7 +121,7 @@ def get_map(borough: str = Query(), year: int = Query()):
         )
     ).add_to(m)
 
-    map_file = os.path.join(os.getcwd(), "frontend", "traffic_map.html")
+    map_file = "/tmp/traffic_map.html"
     if os.path.exists(map_file):
         try:
             os.remove(map_file)
