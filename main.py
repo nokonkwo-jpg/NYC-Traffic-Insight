@@ -3,13 +3,20 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import folium
-import os
+import os, sys
 from datetime import datetime
 import gdown
+import joblib, pandas as pd, numpy as np
 
+sys.path.append(os.path.join(os.path.dirname(__file__), "traffic_volume_models"))
+
+from pydantic import BaseModel, Field
 from starlette.responses import HTMLResponse
 
 app = FastAPI()
+hgb   = joblib.load("hgb_model.joblib")
+rf    = joblib.load("rf_model.joblib")
+seg   = joblib.load("segmented_model.joblib")
 
 app.add_middleware(
     CORSMiddleware,
@@ -162,6 +169,38 @@ def filter_form():
     </body>
     </html>
     """
+
+# 1) Define the request schema
+class PredictRequest(BaseModel):
+    hour_sin:    float = Field(..., example=0.0)
+    hour_cos:    float = Field(..., example=1.0)
+    wd_sin:      float = Field(..., example=0.0)
+    wd_cos:      float = Field(..., example=1.0)
+    month_sin:   float = Field(..., example=0.5)
+    month_cos:   float = Field(..., example=0.866)
+    vol_lag_1:   float = Field(..., example=100)
+    vol_roll_3h: float = Field(..., example=110)
+    vol_roll_24h:float = Field(..., example=115)
+
+# 2) (Optional) Define the response schema
+class PredictResponse(BaseModel):
+    volume: float = Field(..., example=42.7)
+
+# 3) Wire up the POST endpoint
+@app.post("/predict", response_model=PredictResponse)
+def predict(req: PredictRequest):
+    # Turn the incoming JSON into a DataFrame row:
+    df = pd.DataFrame([req.dict()])
+
+    # You can choose which model to call here:
+    # e.g. use the HGB regressor:
+    log_vol = hgb.predict(df)[0]
+    raw_vol = float(np.expm1(log_vol))
+
+    # Or to use the segmented model:
+    # raw_vol = float(seg_model.predict(df)[0])
+
+    return PredictResponse(volume=raw_vol)
 
 '''
 Returns JSON of all GeoJSON used
