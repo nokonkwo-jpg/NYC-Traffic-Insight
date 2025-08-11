@@ -20,7 +20,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BASE_DIR = pathlib.Path("models")
+BASE_DIR = Path(__file__).resolve().parent
 
 # Lazy model loading
 MODEL_FILES = {
@@ -36,6 +36,9 @@ def load_models():
         if MODELS:
             return
         import joblib  # heavy import local
+        for name, path in MODEL_FILES.items():
+            if not path.exists():
+                logging.error("Missing model file for %s at: %s", name, path)
         for name, path in MODEL_FILES.items():
             try:
                 MODELS[name] = joblib.load(path)
