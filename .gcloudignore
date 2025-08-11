@@ -23,4 +23,12 @@ Thumbs.db
 /backend/*
 /data/*
 /experimental/*
+/traffic_volume_models/*
+/RawDataFiles/*
+RandomForestTrafficModel_prediction.png
+
+.gitattributes
+.gitignore
+LICENSE
+README.md
 

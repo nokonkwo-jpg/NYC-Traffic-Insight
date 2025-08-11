@@ -22,7 +22,7 @@ app.add_middleware(
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# Defer heavy loads: models will be loaded on-demand or in a background thread
+# Lazy model loading
 MODEL_FILES = {
     "hgb": BASE_DIR / "hgb_model.joblib",
     "rf":  BASE_DIR / "rf_model.joblib",
@@ -32,11 +32,10 @@ MODELS = {}
 _LOAD_LOCK = threading.Lock()
 
 def load_models():
-    """Load all models once. Safe to call multiple times."""
     with _LOAD_LOCK:
         if MODELS:
             return
-        import joblib  # heavy import kept local
+        import joblib  # heavy import local
         for name, path in MODEL_FILES.items():
             try:
                 MODELS[name] = joblib.load(path)
@@ -45,29 +44,29 @@ def load_models():
                 logging.exception("Failed to load %s: %s", name, e)
 
 def ensure_loaded():
-    """Lazy load models when first needed."""
     if not MODELS:
         load_models()
 
 @app.on_event("startup")
 def startup():
-    # Service should become healthy immediately. Models can warm up in background.
+    # Start fast; warm up in background only if explicitly enabled
     if os.getenv("PRELOAD_MODELS", "false").lower() == "true":
         threading.Thread(target=load_models, daemon=True).start()
 
 @app.get("/healthz", response_class=PlainTextResponse)
 def healthz():
-    # Simple health endpoint for Cloud Run checks
     return "ok"
 
 @app.get("/")
 def root():
     return filter_form()
 
+# GeoJSON filtering & map
 def filter_geojson_on_demand(file_id: str, borough: str, year: int):
-    """Download GeoJSON on-demand and filter it by borough and year."""
+    """Download GeoJSON on-demand and filter by borough/year."""
     import json  # local import
     import gdown
+
     logging.info("Filtering on demand: borough=%s, year=%s", borough, year)
 
     temp_path = "/tmp/traffic_temp.geojson"
@@ -111,8 +110,7 @@ def get_map(borough: str = Query(), year: int = Query(), background_tasks: Backg
     if not display_data["features"]:
         return JSONResponse(status_code=404, content={"error": f"No features found for {borough} in {year}"})
 
-    # Import folium only when needed
-    import folium
+    import folium  # local import
     m = folium.Map(location=[40.739, -73.952], zoom_start=12)
 
     def style_function(feature):
@@ -139,11 +137,11 @@ def get_map(borough: str = Query(), year: int = Query(), background_tasks: Backg
     ).add_to(m)
 
     map_file = "/tmp/traffic_map.html"
-    try:
-        if os.path.exists(map_file):
+    if os.path.exists(map_file):
+        try:
             os.remove(map_file)
-    except PermissionError:
-        return JSONResponse(content={"error": "Map file in use. Try again."}, status_code=500)
+        except PermissionError:
+            return JSONResponse(content={"error": "Map file in use. Try again."}, status_code=500)
 
     m.save(map_file)
     if background_tasks:
@@ -177,8 +175,7 @@ def filter_form():
     </html>
     """
 
-# ==== Prediction API ====
-
+# Prediction API
 class PredictRequest(BaseModel):
     hour_sin: float
     hour_cos: float
@@ -195,11 +192,9 @@ class PredictResponse(BaseModel):
 
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest, model: str = "rf"):
-    # Lazy load models only when prediction is called
     ensure_loaded()
 
-    # Import heavy libs only here
-    import pandas as pd
+    import pandas as pd  # local import
     import numpy as np
 
     df = pd.DataFrame([req.dict()])
@@ -209,9 +204,8 @@ def predict(req: PredictRequest, model: str = "rf"):
         raise HTTPException(status_code=400, detail=f"unknown model '{model}'")
 
     yhat = m.predict(df)[0]
-    # If model was trained on log1p(volume), return expm1 back to raw scale.
     try:
-        y = float(np.expm1(yhat))
+        y = float(np.expm1(yhat))  # if trained on log1p
     except Exception:
         y = float(yhat)
     return PredictResponse(volume=y)
