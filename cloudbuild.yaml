@@ -1,0 +1,42 @@
+# cloudbuild.yaml
+# 1) Install git-lfs and fetch real LFS objects (replacing pointer text files)
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - -lc
+      - |
+        set -euo pipefail
+        apt-get update -y && apt-get install -y git-lfs
+        git lfs install
+        git lfs fetch --all
+        git lfs checkout
+        echo "LFS files present:"
+        git lfs ls-files || true
+
+        # Fail fast if any model is still a pointer
+        for f in hgb_model.joblib rf_model.joblib segmented_model.joblib; do
+          if [[ -f "$f" ]]; then
+            if head -c 64 "$f" | grep -q "version https://git-lfs.github.com/spec/"; then
+              echo "ERROR: $f is a Git LFS pointer; LFS fetch failed." >&2
+              exit 1
+            fi
+          fi
+        done
+
+  # 2) Deploy using Cloud Run Source (buildpacks under the hood)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - -lc
+      - |
+        set -euo pipefail
+        # (Optional) pin Python for buildpacks to match your sklearn/joblib runtime
+        export BP_PYTHON_VERSION="3.11.*"
+        gcloud run deploy ai4all-fastapi \
+          --source . \
+          --region us-central1 \
+          --project ai4allmap \
+          --set-env-vars PRELOAD_MODELS=false
+
+# (optional) push substitutions/timeout/etc here
