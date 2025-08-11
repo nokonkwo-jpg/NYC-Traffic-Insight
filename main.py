@@ -20,7 +20,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = pathlib.Path("models")
 
 # Lazy model loading
 MODEL_FILES = {
