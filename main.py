@@ -1,4 +1,4 @@
-# main.py  —— fast startup + lazy model loading
+# main.py  —— fast startup + lazy model loading + GCS fetch
 
 import os, logging, threading
 from pathlib import Path
@@ -8,7 +8,7 @@ from fastapi import FastAPI, Query, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from starlette.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO)
 
@@ -22,27 +22,124 @@ app.add_middleware(
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# Lazy model loading
-MODEL_FILES = {
-    "hgb": BASE_DIR / "hgb_model.joblib",
-    "rf":  BASE_DIR / "rf_model.joblib",
-    "seg": BASE_DIR / "segmented_model.joblib",
+# === Config via env ===
+MODEL_BUCKET = os.getenv("MODEL_BUCKET", "").strip()
+MODEL_PREFIX = os.getenv("MODEL_PREFIX", "").strip().strip("/")
+# Cloud Run filesystem: only /tmp is writable; default there
+MODEL_DIR = Path(os.getenv("MODEL_DIR", "/tmp/models")).resolve()
+
+# expected filenames (kept same as before)
+EXPECTED_FILES = {
+    "hgb": "hgb_model.joblib",
+    "rf":  "rf_model.joblib",
+    "seg": "segmented_model.joblib",
 }
+
+# Resolved paths (may update after GCS fetch)
+def _model_paths(root: Path):
+    return {k: root / v for k, v in EXPECTED_FILES.items()}
+
+MODEL_FILES = _model_paths(BASE_DIR)  # prefer baked-in files if present
 MODELS = {}
 _LOAD_LOCK = threading.Lock()
+_FETCH_LOCK = threading.Lock()
+_FETCHED = False
+
+
+def fetch_models_from_gcs():
+    """Download expected model files from GCS into MODEL_DIR if missing."""
+    global _FETCHED, MODEL_FILES
+    if not MODEL_BUCKET or not MODEL_PREFIX:
+        logging.info("GCS model download skipped (MODEL_BUCKET/MODEL_PREFIX not set).")
+        return
+
+    with _FETCH_LOCK:
+        if _FETCHED:
+            return
+
+        # If all files already exist somewhere (baked into image), skip
+        already_here = all((_model_paths(MODEL_DIR)[k].exists() or MODEL_FILES[k].exists())
+                           for k in EXPECTED_FILES)
+        if already_here:
+            logging.info("All model files already present; skipping GCS fetch.")
+            _FETCHED = True
+            return
+
+        try:
+            from google.cloud import storage  # local import; add to requirements.txt
+        except Exception as e:
+            logging.exception("google-cloud-storage not available: %s", e)
+            return
+
+        MODEL_DIR.mkdir(parents=True, exist_ok=True)
+        client = storage.Client()
+        bucket = client.bucket(MODEL_BUCKET)
+
+        wanted = set(EXPECTED_FILES.values())
+        found_any = False
+
+        # List once; download only the files we expect (by basename)
+        prefix = f"{MODEL_PREFIX}/" if MODEL_PREFIX else ""
+        logging.info("Fetching models from gs://%s/%s", MODEL_BUCKET, prefix)
+        for blob in client.list_blobs(MODEL_BUCKET, prefix=prefix):
+            name = os.path.basename(blob.name)
+            if name in wanted:
+                dest = MODEL_DIR / name
+                try:
+                    blob.download_to_filename(str(dest))
+                    logging.info("Downloaded %s -> %s", blob.name, dest)
+                    found_any = True
+                except Exception as e:
+                    logging.exception("Failed to download %s: %s", blob.name, e)
+
+        # Update MODEL_FILES to point at MODEL_DIR first (so loads from downloaded set)
+        MODEL_FILES = _model_paths(MODEL_DIR)
+
+        # Log any missing models
+        for k, p in MODEL_FILES.items():
+            if not p.exists():
+                logging.error("Missing model after GCS fetch: %s at %s", k, p)
+
+        _FETCHED = True
+        if not found_any:
+            logging.error("No expected model files found at gs://%s/%s", MODEL_BUCKET, prefix)
+
 
 def load_models():
+    # Ensure we attempted a GCS fetch first (if configured)
+    if not _FETCHED:
+        fetch_models_from_gcs()
+
     with _LOAD_LOCK:
         if MODELS:
             return
         import joblib  # heavy import local
-        for name, path in MODEL_FILES.items():
+
+        # If nothing in MODEL_DIR, fall back to BASE_DIR (baked-in)
+        candidates = list(MODEL_FILES.items())
+        # Also check baked-in paths to be safe
+        baked_files = _model_paths(BASE_DIR)
+        for k, baked in baked_files.items():
+            if k not in dict(candidates) or not dict(candidates)[k].exists():
+                candidates.append((k, baked))
+
+        # Deduplicate by key, prefer first occurrence (downloaded beats baked)
+        seen = set()
+        ordered = []
+        for k, p in candidates:
+            if k not in seen:
+                seen.add(k)
+                ordered.append((k, p))
+
+        for name, path in ordered:
             if not path.exists():
                 logging.error("Missing model file for %s at: %s", name, path)
-        for name, path in MODEL_FILES.items():
+        for name, path in ordered:
+            if not path.exists():
+                continue
             try:
                 MODELS[name] = joblib.load(path)
-                logging.info("Loaded %s from %s", name, path.name)
+                logging.info("Loaded %s from %s", name, path)
             except Exception as e:
                 logging.exception("Failed to load %s: %s", name, e)
 
@@ -52,7 +149,8 @@ def ensure_loaded():
 
 @app.on_event("startup")
 def startup():
-    # Start fast; warm up in background only if explicitly enabled
+    # Kick off background download quickly to reduce p50 on first request
+    threading.Thread(target=fetch_models_from_gcs, daemon=True).start()
     if os.getenv("PRELOAD_MODELS", "false").lower() == "true":
         threading.Thread(target=load_models, daemon=True).start()
 
@@ -64,14 +162,12 @@ def healthz():
 def root():
     return filter_form()
 
-# GeoJSON filtering & map
+# ---------- GeoJSON filtering & map (unchanged) ----------
 def filter_geojson_on_demand(file_id: str, borough: str, year: int):
-    """Download GeoJSON on-demand and filter by borough/year."""
-    import json  # local import
+    import json
     import gdown
 
     logging.info("Filtering on demand: borough=%s, year=%s", borough, year)
-
     temp_path = "/tmp/traffic_temp.geojson"
     gdown.download(id=file_id, output=temp_path, quiet=True)
 
@@ -113,7 +209,7 @@ def get_map(borough: str = Query(), year: int = Query(), background_tasks: Backg
     if not display_data["features"]:
         return JSONResponse(status_code=404, content={"error": f"No features found for {borough} in {year}"})
 
-    import folium  # local import
+    import folium
     m = folium.Map(location=[40.739, -73.952], zoom_start=12)
 
     def style_function(feature):
@@ -178,7 +274,7 @@ def filter_form():
     </html>
     """
 
-# Prediction API
+# ---------- Prediction API ----------
 class PredictRequest(BaseModel):
     hour_sin: float
     hour_cos: float
