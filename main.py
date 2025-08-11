@@ -7,16 +7,19 @@ import os, sys
 from datetime import datetime
 import gdown
 import joblib, pandas as pd, numpy as np
-
-sys.path.append(os.path.join(os.path.dirname(__file__), "traffic_volume_models"))
+from pathlib import Path
 
 from pydantic import BaseModel, Field
 from starlette.responses import HTMLResponse
 
 app = FastAPI()
-hgb   = joblib.load("hgb_model.joblib")
-rf    = joblib.load("rf_model.joblib")
-seg   = joblib.load("segmented_model.joblib")
+
+BASE_DIR = Path(__file__).resolve().parent
+
+# make sure .joblib lives next to main.py
+hgb = joblib.load(BASE_DIR / "hgb_model.joblib")
+rf  = joblib.load(BASE_DIR / "rf_model.joblib")
+seg = joblib.load(BASE_DIR / "segmented_model.joblib")
 
 app.add_middleware(
     CORSMiddleware,
