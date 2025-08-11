@@ -1,23 +1,18 @@
-from fastapi import FastAPI, Query, BackgroundTasks
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-import json
-import folium
-import os, sys
+# main.py  —— fast startup + lazy model loading
+
+import os, logging, threading
+from pathlib import Path
 from datetime import datetime
-import gdown
-import joblib, pandas as pd, numpy as np
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "traffic_volume_models"))
-
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, Query, BackgroundTasks, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from starlette.responses import HTMLResponse
+from pydantic import BaseModel, Field
+
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI()
-hgb   = joblib.load("hgb_model.joblib")
-rf    = joblib.load("rf_model.joblib")
-seg   = joblib.load("segmented_model.joblib")
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,35 +20,65 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-print("Backend starting...")
+BASE_DIR = Path(__file__).resolve().parent
 
-print("Downloading GeoJSON from Google Drive...")
+# Defer heavy loads: models will be loaded on-demand or in a background thread
+MODEL_FILES = {
+    "hgb": BASE_DIR / "hgb_model.joblib",
+    "rf":  BASE_DIR / "rf_model.joblib",
+    "seg": BASE_DIR / "segmented_model.joblib",
+}
+MODELS = {}
+_LOAD_LOCK = threading.Lock()
+
+def load_models():
+    """Load all models once. Safe to call multiple times."""
+    with _LOAD_LOCK:
+        if MODELS:
+            return
+        import joblib  # heavy import kept local
+        for name, path in MODEL_FILES.items():
+            try:
+                MODELS[name] = joblib.load(path)
+                logging.info("Loaded %s from %s", name, path.name)
+            except Exception as e:
+                logging.exception("Failed to load %s: %s", name, e)
+
+def ensure_loaded():
+    """Lazy load models when first needed."""
+    if not MODELS:
+        load_models()
+
+@app.on_event("startup")
+def startup():
+    # Service should become healthy immediately. Models can warm up in background.
+    if os.getenv("PRELOAD_MODELS", "false").lower() == "true":
+        threading.Thread(target=load_models, daemon=True).start()
+
+@app.get("/healthz", response_class=PlainTextResponse)
+def healthz():
+    # Simple health endpoint for Cloud Run checks
+    return "ok"
 
 @app.get("/")
 def root():
     return filter_form()
 
-'''
-Filters GeoJSON based on the borough and year to avoid memory issues upon deployment.
-Args:
-    file_id(str): Google Drive file ID
-    borough(str): Borough to filter on
-    year(int): Year to filter on
-Returns:
-    dict: Filtered GeoJSON'''
 def filter_geojson_on_demand(file_id: str, borough: str, year: int):
-    print(f"Filtering on demand: borough={borough}, year={year}")
-    temp_path = "traffic_temp.geojson"
+    """Download GeoJSON on-demand and filter it by borough and year."""
+    import json  # local import
+    import gdown
+    logging.info("Filtering on demand: borough=%s, year=%s", borough, year)
 
-    # Download to temp file
+    temp_path = "/tmp/traffic_temp.geojson"
     gdown.download(id=file_id, output=temp_path, quiet=True)
 
-    filtered_features = []
+    filtered = []
     with open(temp_path, "r", encoding="utf-8") as f:
         try:
             raw = json.load(f)
         except Exception as e:
-            print("Error loading GeoJSON:", e)
+            logging.exception("Error loading GeoJSON: %s", e)
             return {"type": "FeatureCollection", "features": []}
 
         for feature in raw.get("features", []):
@@ -63,57 +88,44 @@ def filter_geojson_on_demand(file_id: str, borough: str, year: int):
             try:
                 dt = datetime.fromisoformat(ts)
                 if b == borough.lower() and dt.year == year:
-                    filtered_features.append(feature)
+                    filtered.append(feature)
             except ValueError:
                 continue
 
-    os.remove(temp_path)
-    return {
-        "type": "FeatureCollection",
-        "features": filtered_features
-    }
+    try:
+        os.remove(temp_path)
+    except OSError:
+        pass
 
+    return {"type": "FeatureCollection", "features": filtered}
 
-'''
-An endpoint that generates a visual representation of traffic data given the borough
-and year
-Args:
-    borough(str)
-    year(int)
-'''
 @app.get("/map")
-def get_map(borough: str = Query(), year: int = Query(), background_tasks: BackgroundTasks=None):
-    print(f"/map endpoint hit: borough={borough}, year={year}")
+def get_map(borough: str = Query(), year: int = Query(), background_tasks: BackgroundTasks = None):
+    logging.info("/map hit: borough=%s, year=%s", borough, year)
 
-    file_id = "1wO3NjqVdg_GUpoEv1JpJHxZoV20Zz-Uq"
-    display_data = filter_geojson_on_demand(file_id, borough, year)
-
+    display_data = filter_geojson_on_demand(
+        file_id="1wO3NjqVdg_GUpoEv1JpJHxZoV20Zz-Uq",
+        borough=borough,
+        year=year,
+    )
     if not display_data["features"]:
-        return JSONResponse(
-            status_code=404,
-            content={"error": f"No features found for {borough} in {year}"}
-        )
+        return JSONResponse(status_code=404, content={"error": f"No features found for {borough} in {year}"})
 
-    print(f"Filtered down to {len(display_data['features'])} features.")
-
-    # Generate map
+    # Import folium only when needed
+    import folium
     m = folium.Map(location=[40.739, -73.952], zoom_start=12)
 
     def style_function(feature):
-        volume = feature['properties'].get('Volume', 0)
+        volume = feature["properties"].get("Volume", 0)
         if volume > 20:
-            color = 'red'
+            color = "red"
         elif volume > 10:
-            color = 'orange'
+            color = "orange"
         elif volume > 5:
-            color = 'yellow'
+            color = "yellow"
         else:
-            color = 'green'
-        return {
-            'color': color,
-            'weight': 5,
-            'opacity': 0.8
-        }
+            color = "green"
+        return {"color": color, "weight": 5, "opacity": 0.8}
 
     folium.GeoJson(
         display_data,
@@ -122,32 +134,27 @@ def get_map(borough: str = Query(), year: int = Query(), background_tasks: Backg
         tooltip=folium.GeoJsonTooltip(
             fields=["Street", "From", "To", "Volume", "Timestamp", "Direction", "Borough"],
             aliases=["Street:", "From:", "To:", "Volume:", "Timestamp:", "Direction:", "Borough:"],
-            localize=True
-        )
+            localize=True,
+        ),
     ).add_to(m)
 
     map_file = "/tmp/traffic_map.html"
-    if os.path.exists(map_file):
-        try:
+    try:
+        if os.path.exists(map_file):
             os.remove(map_file)
-        except PermissionError:
-            return JSONResponse(content={"error": "Map file in use. Try again."}, status_code=500)
+    except PermissionError:
+        return JSONResponse(content={"error": "Map file in use. Try again."}, status_code=500)
 
     m.save(map_file)
-    background_tasks.add_task(os.remove, map_file)
+    if background_tasks:
+        background_tasks.add_task(os.remove, map_file)
     return FileResponse(map_file, background=background_tasks)
 
-
-'''
-A form users fill out to query the /map endpoint
-'''
 @app.get("/filter", response_class=HTMLResponse)
 def filter_form():
     boroughs = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
-    years = list(range(2014, 2024))  # or use logic to generate based on your data
-
+    years = list(range(2014, 2024))
     options_html = lambda items: "\n".join(f'<option value="{item}">{item}</option>' for item in items)
-
     return f"""
     <html>
     <head><title>Filter Map</title></head>
@@ -170,45 +177,50 @@ def filter_form():
     </html>
     """
 
-# 1) Define the request schema
+# ==== Prediction API ====
+
 class PredictRequest(BaseModel):
-    hour_sin:    float = Field(..., example=0.0)
-    hour_cos:    float = Field(..., example=1.0)
-    wd_sin:      float = Field(..., example=0.0)
-    wd_cos:      float = Field(..., example=1.0)
-    month_sin:   float = Field(..., example=0.5)
-    month_cos:   float = Field(..., example=0.866)
-    vol_lag_1:   float = Field(..., example=100)
-    vol_roll_3h: float = Field(..., example=110)
-    vol_roll_24h:float = Field(..., example=115)
+    hour_sin: float
+    hour_cos: float
+    wd_sin: float
+    wd_cos: float
+    month_sin: float
+    month_cos: float
+    vol_lag_1: float
+    vol_roll_3h: float
+    vol_roll_24h: float
 
-# 2) (Optional) Define the response schema
 class PredictResponse(BaseModel):
-    volume: float = Field(..., example=42.7)
+    volume: float
 
-# 3) Wire up the POST endpoint
 @app.post("/predict", response_model=PredictResponse)
-def predict(req: PredictRequest):
-    # Turn the incoming JSON into a DataFrame row:
+def predict(req: PredictRequest, model: str = "rf"):
+    # Lazy load models only when prediction is called
+    ensure_loaded()
+
+    # Import heavy libs only here
+    import pandas as pd
+    import numpy as np
+
     df = pd.DataFrame([req.dict()])
 
-    # You can choose which model to call here:
-    # e.g. use the HGB regressor:
-    log_vol = hgb.predict(df)[0]
-    raw_vol = float(np.expm1(log_vol))
+    m = MODELS.get(model)
+    if m is None:
+        raise HTTPException(status_code=400, detail=f"unknown model '{model}'")
 
-    # Or to use the segmented model:
-    # raw_vol = float(seg_model.predict(df)[0])
+    yhat = m.predict(df)[0]
+    # If model was trained on log1p(volume), return expm1 back to raw scale.
+    try:
+        y = float(np.expm1(yhat))
+    except Exception:
+        y = float(yhat)
+    return PredictResponse(volume=y)
 
-    return PredictResponse(volume=raw_vol)
-
-'''
-Returns JSON of all GeoJSON used
-'''
-
-# Health check to make sure server is running
 @app.get("/ping")
 def ping():
-    print("Ping received", flush=True)
     return {"status": "ok"}
 
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
