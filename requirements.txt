@@ -18,3 +18,4 @@ gdown~=5.2.0
 joblib~=1.5.1
 pydantic~=2.11.7
 openmeteo_requests~=1.5.0
+google-cloud-storage~=3.2.0
